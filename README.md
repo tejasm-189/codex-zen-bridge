@@ -64,14 +64,24 @@ DeepSeek V4 Flash (free via OpenCode Zen)
 
 ## Install
 
+**One-liner (downloads the Go source and builds it — needs Go + codex):**
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/tejasm-189/codex-zen-bridge/master/install.sh | bash
+```
+
+**From the extracted tarball / cloned repo:**
+
 ```
 tar -xzf zen-bridge-pack.tar.gz
 cd zen-bridge-pack
 ./install.sh
 ```
 
-That: builds the bridge, installs a systemd user service, waits for it to
-answer, and writes `~/.codex/config.toml` (backs up an existing one).
+Either way it: builds the bridge, installs a systemd user service, waits for
+it to answer, and writes `~/.codex/config.toml` (backs up an existing one).
+When run via `curl | bash` with no local `src/`, the script fetches `go.mod`
+and `main.go` from the repo at `master` and builds them.
 
 ## Verify
 

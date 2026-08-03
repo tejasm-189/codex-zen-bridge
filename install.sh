@@ -3,10 +3,16 @@ set -euo pipefail
 
 # opencode-zen-bridge installer
 # Sets up: Go bridge -> systemd user service -> codex provider config.
-# Requires: codex CLI + Go >= 1.24 (or a prebuilt binary). No API keys.
+# Works two ways:
+#   1. From a cloned/extracted repo:  ./install.sh            (uses ./src)
+#   2. Anywhere (one-liner):          curl -fsSL <url>/install.sh | bash
+#      -> fetches src from GitHub, builds, installs. Requires Go + codex.
+# Requires: codex CLI + Go >= 1.24 (or already-built binary). No API keys.
 
+REPO_RAW="https://raw.githubusercontent.com/tejasm-189/codex-zen-bridge/master"
 echo "==> opencode-zen-bridge installer"
 
+# --- 1. codex must be present ------------------------------------------------
 if ! command -v codex >/dev/null 2>&1; then
   echo "ERROR: codex CLI not found on PATH."
   echo "  Install it first, e.g.:  npm install -g @openai/codex"
@@ -14,12 +20,29 @@ if ! command -v codex >/dev/null 2>&1; then
 fi
 echo "    codex: $(codex --version 2>/dev/null || echo unknown)"
 
+# --- 2. Determine source directory (local src/ falls back to GitHub fetch) ---
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd 2>/dev/null || echo "$(dirname "$0")")"
+SRC_DIR="$SCRIPT_DIR/src"
+
+fetch_src() {
+  echo "==> No local src/ found; fetching source from $REPO_RAW"
+  TMP="$(mktemp -d)"
+  curl -fsSL "$REPO_RAW/src/go.mod"  -o "$TMP/go.mod"
+  curl -fsSL "$REPO_RAW/src/main.go" -o "$TMP/main.go"
+  SRC_DIR="$TMP"
+}
+
+if [ ! -f "$SRC_DIR/main.go" ]; then
+  fetch_src
+fi
+
+# --- 3. Build or reuse an existing binary -------------------------------------
 BIN_DIR="$HOME/.local/bin"
 mkdir -p "$BIN_DIR"
 
 if command -v go >/dev/null 2>&1; then
   echo "==> Building bridge with $(go version | awk '{print $3}')"
-  (cd "$(dirname "$0")/src" && CGO_ENABLED=0 go build -ldflags="-s -w" -o "$BIN_DIR/opencode-zen-bridge" .)
+  (cd "$SRC_DIR" && CGO_ENABLED=0 go build -ldflags="-s -w" -o "$BIN_DIR/opencode-zen-bridge" .)
 else
   if [ -x "$BIN_DIR/opencode-zen-bridge" ]; then
     echo "    Go not found; using existing binary at $BIN_DIR/opencode-zen-bridge"
@@ -30,6 +53,7 @@ else
   fi
 fi
 
+# --- 4. Install systemd user service ------------------------------------------
 echo "==> Installing systemd user service"
 mkdir -p "$HOME/.config/systemd/user"
 cat > "$HOME/.config/systemd/user/opencode-zen-bridge.service" <<EOF
@@ -65,6 +89,7 @@ if ! curl -sf http://127.0.0.1:6446/v1/models >/dev/null 2>&1; then
   exit 1
 fi
 
+# --- 5. Write codex provider config --------------------------------------------
 echo "==> Writing codex provider config"
 CODEX_DIR="$HOME/.codex"
 mkdir -p "$CODEX_DIR"
@@ -97,5 +122,7 @@ echo ""
 echo "Try it:"
 echo "  codex exec \"Use the web_search tool to find today's world population, then reply with one sentence.\""
 echo ""
-echo "Manual (no systemd): $(dirname "$0")/run.sh"
-echo "Uninstall:           $(dirname "$0")/uninstall.sh"
+if [ -x "$SCRIPT_DIR/run.sh" ]; then
+  echo "Manual (no systemd): $SCRIPT_DIR/run.sh"
+fi
+echo "Uninstall:           curl -fsSL $REPO_RAW/uninstall.sh | bash"
