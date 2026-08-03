@@ -706,11 +706,20 @@ func responsesHandler(w http.ResponseWriter, r *http.Request) {
 		var finalUsage map[string]any
 		stopReason := ""
 
-		sc := bufio.NewScanner(upResp.Body)
-		sc.Buffer(make([]byte, 64*1024), 1024*1024)
-		for sc.Scan() {
-			line := strings.TrimSpace(sc.Text())
+		sc := bufio.NewReader(upResp.Body)
+
+		var upstreamErr error
+		for {
+			line, readErr := sc.ReadString('\n')
+			line = strings.TrimRight(line, "\r")
+			if strings.TrimSpace(line) != "" {
+				line = strings.TrimSpace(line)
+			}
 			if !strings.HasPrefix(line, "data:") {
+				if readErr != nil {
+					upstreamErr = readErr
+					break
+				}
 				continue
 			}
 			data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
@@ -809,8 +818,8 @@ func responsesHandler(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 		}
-		if err := sc.Err(); err != nil {
-			log.Printf("upstream scan error: %v", err)
+		if upstreamErr != nil {
+			log.Printf("upstream read error: %v", upstreamErr)
 		}
 
 		var outputItems []map[string]any
@@ -920,7 +929,26 @@ func responsesHandler(w http.ResponseWriter, r *http.Request) {
 			}
 			anyInternal = true
 			argsJSON, _ := fc["arguments"].(string)
+
+			// Keep the SSE connection alive (codex aborts a silent stream) while
+			// the internal tool does its synchronous HTTP work.
+			stopPing := make(chan struct{})
+			go func() {
+				t := time.NewTicker(2 * time.Second)
+				defer t.Stop()
+				for {
+					select {
+					case <-t.C:
+						fmt.Fprint(w, ": keepalive\n\n")
+						flush(w)
+					case <-stopPing:
+						return
+					}
+				}
+			}()
 			result := execInternalTool(name, argsJSON)
+			close(stopPing)
+
 			log.Printf("internal tool %s -> %d bytes", name, len(result))
 			messages = append(messages, map[string]any{"role": "tool", "tool_call_id": fc["call_id"], "content": result})
 		}
