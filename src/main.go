@@ -22,9 +22,11 @@ const (
 	chatURL   = "https://opencode.ai/zen/v1/chat/completions"
 	modelsURL = "https://opencode.ai/zen/v1/models"
 	listen    = "127.0.0.1:6446"
+	apiKeyEnv = "OPENCODE_API_KEY"
 )
 
 var catalogPath = filepath.Join(os.Getenv("HOME"), ".local", "share", "opencode", "codex-models.json")
+var opencodeAPIKey = strings.TrimSpace(os.Getenv(apiKeyEnv))
 
 const modelsTTL = 60 * time.Second
 
@@ -95,7 +97,12 @@ func equalStrings(a, b []string) bool {
 
 func fetchZenModels() ([]map[string]any, error) {
 	client := &http.Client{Timeout: 20 * time.Second}
-	resp, err := client.Get(modelsURL)
+	req, err := http.NewRequest(http.MethodGet, modelsURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	applyZenAuth(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -174,6 +181,12 @@ func modelsWatcher() {
 	for {
 		time.Sleep(modelsTTL)
 		getFreeModels(true)
+	}
+}
+
+func applyZenAuth(req *http.Request) {
+	if opencodeAPIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+opencodeAPIKey)
 	}
 }
 
@@ -654,7 +667,19 @@ func responsesHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		payload, _ := json.Marshal(chatBody)
 
-		upResp, err := client.Post(chatURL, "application/json", bytes.NewReader(payload))
+		upReq, err := http.NewRequest(http.MethodPost, chatURL, bytes.NewReader(payload))
+		if err != nil {
+			log.Printf("upstream request build error: %v", err)
+			sse(w, "response.failed", map[string]any{
+				"type": "response.failed", "response": map[string]any{"id": respID},
+				"error": map[string]any{"code": "upstream_error", "message": err.Error()},
+			})
+			return nil, nil, nil, nil, "", true
+		}
+		upReq.Header.Set("Content-Type", "application/json")
+		upReq.Header.Set("Accept", "text/event-stream")
+		applyZenAuth(upReq)
+		upResp, err := client.Do(upReq)
 		if err != nil {
 			log.Printf("upstream exception: %v", err)
 			sse(w, "response.failed", map[string]any{
@@ -933,6 +958,11 @@ func isInternalTool(name string) bool {
 }
 
 func main() {
+	if opencodeAPIKey == "" {
+		log.Printf("%s not set; using keyless OpenCode Zen mode", apiKeyEnv)
+	} else {
+		log.Printf("using OpenCode API key from %s", apiKeyEnv)
+	}
 	getFreeModels(true)
 	go modelsWatcher()
 
