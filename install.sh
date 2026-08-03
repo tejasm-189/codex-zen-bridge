@@ -2,11 +2,12 @@
 set -euo pipefail
 
 # opencode-zen-bridge installer
-# Sets up: Go bridge -> systemd user service -> codex provider config.
+# Sets up: Go bridge -> background service (systemd/launchd/fallback) -> codex config.
 # Works two ways:
 #   1. From a cloned/extracted repo:  ./install.sh            (uses ./src)
 #   2. Anywhere (one-liner):          curl -fsSL <url>/install.sh | bash
 #      -> fetches src from GitHub, builds, installs. Requires Go + codex.
+# Cross-platform: Linux (systemd), macOS (launchd), other *nix (nohup).
 # Requires: codex CLI + Go >= 1.24 (or already-built binary). No API keys.
 
 REPO_RAW="https://raw.githubusercontent.com/tejasm-189/codex-zen-bridge/master"
@@ -53,10 +54,27 @@ else
   fi
 fi
 
-# --- 4. Install systemd user service ------------------------------------------
-echo "==> Installing systemd user service"
-mkdir -p "$HOME/.config/systemd/user"
-cat > "$HOME/.config/systemd/user/opencode-zen-bridge.service" <<EOF
+# --- 4. Install as a background/service process (cross-platform) ------------
+OS="$(uname -s)"
+SVC_ID="opencode-zen-bridge"
+
+start_check() {
+  printf '    waiting for bridge on 127.0.0.1:6446'
+  for i in $(seq 1 20); do
+    if curl -sf http://127.0.0.1:6446/v1/models >/dev/null 2>&1; then
+      echo " OK"
+      return 0
+    fi
+    printf '.'
+    sleep 0.5
+  done
+  return 1
+}
+
+if [ "$OS" = "Linux" ] && command -v systemctl >/dev/null 2>&1; then
+  echo "==> Installing systemd user service"
+  mkdir -p "$HOME/.config/systemd/user"
+  cat > "$HOME/.config/systemd/user/$SVC_ID.service" <<EOF
 [Unit]
 Description=OpenCode Zen bridge (codex free DeepSeek V4 Flash)
 After=network-online.target
@@ -71,22 +89,62 @@ RestartSec=3
 [Install]
 WantedBy=default.target
 EOF
-
-systemctl --user daemon-reload
-systemctl --user enable --now opencode-zen-bridge
-
-echo -n "    waiting for bridge on 127.0.0.1:6446"
-for i in $(seq 1 20); do
-  if curl -sf http://127.0.0.1:6446/v1/models >/dev/null 2>&1; then
-    echo " OK"
-    break
+  systemctl --user daemon-reload
+  systemctl --user enable --now "$SVC_ID"
+  if start_check; then
+    :
+  else
+    echo "ERROR: bridge did not come up. Check: journalctl --user -u $SVC_ID -n 50"
+    exit 1
   fi
-  echo -n "."
-  sleep 0.5
-done
-if ! curl -sf http://127.0.0.1:6446/v1/models >/dev/null 2>&1; then
-  echo "ERROR: bridge did not come up. Check: journalctl --user -u opencode-zen-bridge -n 50"
-  exit 1
+
+elif [ "$OS" = "Darwin" ]; then
+  echo "==> Installing macOS launchd agent"
+  mkdir -p "$HOME/Library/LaunchAgents"
+  PLIST="$HOME/Library/LaunchAgents/io.tejasm.$SVC_ID.plist"
+  cat > "$PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>io.tejasm.$SVC_ID</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$BIN_DIR/opencode-zen-bridge</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>$HOME/.local/share/opencode/$SVC_ID.log</string>
+  <key>StandardErrorPath</key>
+  <string>$HOME/.local/share/opencode/$SVC_ID.err.log</string>
+</dict>
+</plist>
+EOF
+  mkdir -p "$HOME/.local/share/opencode"
+  launchctl load -w "$PLIST"
+  if start_check; then
+    :
+  else
+    echo "ERROR: bridge did not come up. Logs: ~/.local/share/opencode/$SVC_ID.err.log"
+    exit 1
+  fi
+
+else
+  echo "==> No systemd/launchd detected; starting bridge in the background"
+  echo "    (it will not auto-start on boot. Use run.sh or a cron/systemd unit for that.)"
+  mkdir -p "$HOME/.local/share/opencode"
+  nohup "$BIN_DIR/opencode-zen-bridge" \
+    >>"$HOME/.local/share/opencode/$SVC_ID.log" 2>&1 &
+  if start_check; then
+    :
+  else
+    echo "ERROR: bridge did not come up. Logs: ~/.local/share/opencode/$SVC_ID.log"
+    exit 1
+  fi
 fi
 
 # --- 5. Write codex provider config --------------------------------------------
@@ -123,6 +181,6 @@ echo "Try it:"
 echo "  codex exec \"Use the web_search tool to find today's world population, then reply with one sentence.\""
 echo ""
 if [ -x "$SCRIPT_DIR/run.sh" ]; then
-  echo "Manual (no systemd): $SCRIPT_DIR/run.sh"
+  echo "Manual (run in foreground): $SCRIPT_DIR/run.sh"
 fi
 echo "Uninstall:           curl -fsSL $REPO_RAW/uninstall.sh | bash"

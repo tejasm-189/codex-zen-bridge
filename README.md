@@ -78,10 +78,12 @@ cd zen-bridge-pack
 ./install.sh
 ```
 
-Either way it: builds the bridge, installs a systemd user service, waits for
-it to answer, and writes `~/.codex/config.toml` (backs up an existing one).
-When run via `curl | bash` with no local `src/`, the script fetches `go.mod`
-and `main.go` from the repo at `master` and builds them.
+Either way it: builds the bridge, installs it as a background service
+(systemd user service on Linux, launchd agent on macOS, plain `nohup` fallback
+otherwise), waits for it to answer, and writes `~/.codex/config.toml` (backs
+up an existing one). When run via `curl | bash` with no local `src/`, the
+script fetches `go.mod` and `main.go` from the repo at `master` and builds
+them. The codex config it writes is identical on every OS.
 
 ## Verify
 
@@ -100,7 +102,7 @@ errors. Watch tool use: `journalctl --user -u opencode-zen-bridge -f` shows
 
 | File                  | Purpose                                            |
 |-----------------------|----------------------------------------------------|
-| `install.sh`          | Build + systemd + codex config (idempotent)        |
+| `install.sh`          | Build + service (systemd/launchd/nohup) + codex config |
 | `run.sh`              | Foreground runner (no systemd)                     |
 | `uninstall.sh`        | Reverts everything                                 |
 | `src/main.go`         | The bridge (single Go file, no deps beyond stdlib) |
@@ -110,8 +112,11 @@ errors. Watch tool use: `journalctl --user -u opencode-zen-bridge -f` shows
 
 - **Plain plug-and-play?** Nearly — prerequisites are just codex + Go (or a
   prebuilt binary) and internet. No keys, no model setup, no MCP servers.
-- **Bridge won't start** → `journalctl --user -u opencode-zen-bridge -n 50`;
-  usually missing outbound HTTPS to `opencode.ai`.
+- **Bridge won't start** → Linux: `journalctl --user -u opencode-zen-bridge -n 50`;
+  macOS: `~/.local/share/opencode/opencode-zen-bridge.err.log`; usually missing
+  outbound HTTPS to `opencode.ai`.
+- **service manager** → Linux uses systemd, macOS uses launchd; if neither is
+  present the installer runs the bridge with `nohup` (no auto-start on boot).
 - **codex errors `unsupported call: web_search`** → you're hitting a bridge
   without the internal-tool fix (rebuild from `src/`). Or you enabled a
   real `[mcp_servers.*]` entry in codex config that injects a competing tool.
@@ -119,4 +124,5 @@ errors. Watch tool use: `journalctl --user -u opencode-zen-bridge -f` shows
   `base_url` in codex config to match.
 - The `[mcp_servers.exa]` entry seen in the original config is **not
   needed** (codex's remote MCP is broken for this) and is omitted here.
-- Only `linux/$(uname -m)` binaries are supported by the build scripts.
+- Linux and macOS are supported; Windows needs WSL/Git Bash and falls back to
+  `nohup`.
