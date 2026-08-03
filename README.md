@@ -32,8 +32,10 @@ opencode-zen-bridge (Go, ~17 MB)     listens on 127.0.0.1:6446
 DeepSeek V4 Flash (free via OpenCode Zen)
 ```
 
-- **No API keys anywhere.** Free tier model is picked automatically from
+- **Keyless by default, key optional.** Free tier model is picked automatically from
   `https://opencode.ai/zen/v1/models` (all `*-free` + `big-pickle`).
+  If you have an OpenCode key, set `OPENCODE_API_KEY` in the bridge process
+  environment and the bridge will include an Authorization header upstream.
 - The bridge **auto-writes** `~/.local/share/opencode/codex-models.json`
   (model catalog for codex) on startup.
 - `web_search`: Exa MCP first, Firecrawl MCP as fallback.
@@ -61,6 +63,9 @@ DeepSeek V4 Flash (free via OpenCode Zen)
 - **systemd user session** — optional; you can run `run.sh` in a terminal
   instead.
 - **Outbound HTTPS** to `opencode.ai`, `mcp.exa.ai`, `mcp.firecrawl.dev`.
+
+Optional:
+- `OPENCODE_API_KEY` — if set, bridge uses it for OpenCode Zen API calls.
 
 ## Install
 
@@ -129,7 +134,10 @@ errors. Watch tool use: `journalctl --user -u opencode-zen-bridge -f` shows
 ## Notes / troubleshooting
 
 - **Plain plug-and-play?** Nearly — prerequisites are just codex + Go (or a
-  prebuilt binary) and internet. No keys, no model setup, no MCP servers.
+  prebuilt binary) and internet. No keys required, no model setup, no MCP servers.
+- **Using an API key?** Set `OPENCODE_API_KEY` where the bridge runs. For
+  service managers (systemd user, launchd, Scheduled Task), set it in that
+  service environment (not just an interactive shell).
 - **Bridge won't start** → Linux: `journalctl --user -u opencode-zen-bridge -n 50`;
   macOS: `~/.local/share/opencode/opencode-zen-bridge.err.log`; usually missing
   outbound HTTPS to `opencode.ai`.
