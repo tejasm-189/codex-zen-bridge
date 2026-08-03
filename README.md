@@ -79,11 +79,27 @@ cd zen-bridge-pack
 ```
 
 Either way it: builds the bridge, installs it as a background service
-(systemd user service on Linux, launchd agent on macOS, plain `nohup` fallback
-otherwise), waits for it to answer, and writes `~/.codex/config.toml` (backs
-up an existing one). When run via `curl | bash` with no local `src/`, the
-script fetches `go.mod` and `main.go` from the repo at `master` and builds
-them. The codex config it writes is identical on every OS.
+(systemd user service on Linux, launchd agent on macOS, Scheduled Task on
+Windows, plain `nohup` fallback otherwise), waits for it to answer, and writes
+`~/.codex/config.toml` (backs up an existing one). When run via `curl | bash`
+(or the PS one-liner) with no local `src/`, the script fetches `go.mod` and
+`main.go` from the repo at `master` and builds them. The codex config it
+writes is identical on every OS.
+
+**Windows (native, no WSL):**
+
+```powershell
+# from the cloned/extracted repo (run in PowerShell, not cmd):
+Set-ExecutionPolicy -Scope Process Bypass
+.\install.ps1
+
+# or a one-liner:
+powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/tejasm-189/codex-zen-bridge/master/install.ps1 | iex"
+```
+
+Windows install uses a Scheduled Task (starts at logon, restarts on failure)
+and writes the same `%USERPROFILE%\.codex\config.toml`. Uninstall:
+`.\uninstall.ps1`.
 
 ## Verify
 
@@ -103,8 +119,10 @@ errors. Watch tool use: `journalctl --user -u opencode-zen-bridge -f` shows
 | File                  | Purpose                                            |
 |-----------------------|----------------------------------------------------|
 | `install.sh`          | Build + service (systemd/launchd/nohup) + codex config |
+| `install.ps1`         | Windows twin (Scheduled Task) + codex config            |
 | `run.sh`              | Foreground runner (no systemd)                     |
 | `uninstall.sh`        | Reverts everything                                 |
+| `uninstall.ps1`       | Windows uninstaller                                 |
 | `src/main.go`         | The bridge (single Go file, no deps beyond stdlib) |
 | `src/go.mod`          | Module file (`go 1.24.4`, stdlib only)             |
 
@@ -124,5 +142,6 @@ errors. Watch tool use: `journalctl --user -u opencode-zen-bridge -f` shows
   `base_url` in codex config to match.
 - The `[mcp_servers.exa]` entry seen in the original config is **not
   needed** (codex's remote MCP is broken for this) and is omitted here.
-- Linux and macOS are supported; Windows needs WSL/Git Bash and falls back to
-  `nohup`.
+- Linux ships `install.sh`, Windows has a native `install.ps1` (via Scheduled
+  Task), and macOS uses `install.sh` with launchd. Whatever the OS, the exact
+  same `~/.codex/config.toml` is produced.
